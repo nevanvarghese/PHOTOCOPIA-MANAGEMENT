@@ -1,0 +1,12 @@
+{
+  "name": "photocopia-management",
+  "version": "1.0.0",
+  "description": "Management bot for photocopia",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "discord.js": "^14.14.1"
+  }
+}

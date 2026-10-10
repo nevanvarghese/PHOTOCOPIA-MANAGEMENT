@@ -12,7 +12,7 @@ const http = require('http');
 // ==========================================
 // CONFIGURATION
 // ==========================================
-const FOUNDER_USER_ID = 1025757148543721474; // Replace with your actual user ID
+const FOUNDER_USER_ID = 'YOUR_DISCORD_USER_ID_HERE'; // Replace with your actual user ID
 
 // Banned words list for auto-moderation
 const BANNED_WORDS = [
@@ -182,14 +182,14 @@ client.on('messageCreate', async (message) => {
   if (isGalleryChannel) {
     const hasImage = message.attachments.size > 0 && message.attachments.some(att => att.contentType && att.contentType.startsWith('image'));
 
-    // If message is text-only or lacks a proper image file, delete it immediately
+    // STRICT RULE: If it doesn't have an image file attached, delete it instantly!
     if (!hasImage) {
       try {
         await message.delete();
-        const warning = await message.channel.send(`${message.author}, this is a strict photo gallery channel! Please post images only. Use the companion chat channels for discussions.`);
+        const warning = await message.channel.send(`${message.author}, this is a strict photo gallery channel! Please post images only (no text or chat messages here).`);
         setTimeout(() => warning.delete().catch(() => {}), 5000);
       } catch (err) {
-        console.error('Failed to clean text message in gallery:', err);
+        console.error('Failed to clean text message in gallery (Check bot permissions/role hierarchy):', err);
       }
       return;
     }
@@ -212,7 +212,7 @@ client.on('messageCreate', async (message) => {
     // Add to duplicate cache
     postedImageHashes.add(proxyUrl);
 
-    // AI Image Detection Guard (Checks filename indicators, links or common synthetic prompt tags)
+    // AI Image Detection Guard
     const contentCheck = (message.content || '').toLowerCase();
     const fileName = attachment.name ? attachment.name.toLowerCase() : '';
     const isAiGenerated = fileName.includes('midjourney') || 
@@ -225,7 +225,6 @@ client.on('messageCreate', async (message) => {
       try {
         await message.delete();
         
-        // Issue an automatic strike for posting AI art in real photography channels
         const userId = message.author.id;
         let currentStrikes = (strikeLog.get(userId) || 0) + 1;
         strikeLog.set(userId, currentStrikes);
@@ -244,7 +243,6 @@ client.on('messageCreate', async (message) => {
 
         await message.channel.send(`${message.author}, AI-generated images are not permitted in real photography channels. ${punishmentAction}`);
 
-        // Notify Founder via DM
         if (FOUNDER_USER_ID && FOUNDER_USER_ID !== 'YOUR_DISCORD_USER_ID_HERE') {
           const founderUser = await client.users.fetch(FOUNDER_USER_ID).catch(() => null);
           if (founderUser) {
@@ -257,12 +255,11 @@ client.on('messageCreate', async (message) => {
       return;
     }
 
-    // Award XP / Increment Photo Count for valid new images (10 images per level)
+    // Award XP / Increment Photo Count for valid new images
     const userId = message.author.id;
     const currentImages = (userImageCounts.get(userId) || 0) + 1;
     userImageCounts.set(userId, currentImages);
 
-    // Optional level-up notification check
     if (currentImages % 10 === 0) {
       const newRank = getRankTitle(currentImages);
       message.channel.send(`🎉 Congrats ${message.author}! You've reached **${currentImages} photos** posted and unlocked the rank: **${newRank}**!`).catch(() => {});

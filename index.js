@@ -25,7 +25,7 @@ const userImageCounts = new Map(); // { userId: imageCount }
 const postedImageHashes = new Set(); // Stores attachment URLs/proxies to prevent duplicates
 
 // Gallery channels where the rules apply
-const GALLERY_CHANNELS = [
+const GALLERY_CHANNEL_NAMES = [
   'camera-shots',
   'mobile-shots',
   'raw-edits-lounge',
@@ -115,7 +115,7 @@ const commands = [
         .setRequired(false))
 ].map(command => command.toJSON());
 
-client.once('ready', async () => {
+client.once('clientReady', async () => {
   console.log(`Management Bot logged in as ${client.user.tag}!`);
 
   const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
@@ -175,21 +175,25 @@ client.on('guildMemberAdd', async (member) => {
 client.on('messageCreate', async (message) => {
   if (message.author.bot || !message.guild) return;
 
-  const channelName = message.channel.name;
-  const isGalleryChannel = GALLERY_CHANNELS.includes(channelName);
+  const isGalleryChannel = GALLERY_CHANNEL_NAMES.includes(message.channel.name);
 
   // 1. GALLERY CHANNEL ENFORCEMENT (Image-Only, Duplication Check & AI Guard)
   if (isGalleryChannel) {
-    const hasImage = message.attachments.size > 0 && message.attachments.some(att => att.contentType && att.contentType.startsWith('image'));
+    console.log(`[Gallery Check] Message in #${message.channel.name} by ${message.author.tag}. Attachments: ${message.attachments.size}`);
+
+    const hasImage = message.attachments.size > 0 && message.attachments.some(att => {
+      return att.contentType && att.contentType.startsWith('image');
+    });
 
     // STRICT RULE: If it doesn't have an image file attached, delete it instantly!
     if (!hasImage) {
       try {
         await message.delete();
+        console.log(`[Auto-Mod] Successfully deleted text message from ${message.author.tag} in gallery.`);
         const warning = await message.channel.send(`${message.author}, this is a strict photo gallery channel! Please post images only (no text or chat messages here).`);
         setTimeout(() => warning.delete().catch(() => {}), 5000);
       } catch (err) {
-        console.error('Failed to clean text message in gallery (Check bot permissions/role hierarchy):', err);
+        console.error('[Error] Failed to delete message. Make sure the Bot role has "Manage Messages" permission and is dragged ABOVE your role in Server Settings -> Roles!', err);
       }
       return;
     }
@@ -246,7 +250,7 @@ client.on('messageCreate', async (message) => {
         if (FOUNDER_USER_ID && FOUNDER_USER_ID !== 'YOUR_DISCORD_USER_ID_HERE') {
           const founderUser = await client.users.fetch(FOUNDER_USER_ID).catch(() => null);
           if (founderUser) {
-            await founderUser.send(`🤖 **AI Image Violation Alert** 🤖\nUser: \`${message.author.tag}\` (${userId})\nChannel: \`#${channelName}\`\nAction: ${punishmentAction}`);
+            await founderUser.send(`🤖 **AI Image Violation Alert** 🤖\nUser: \`${message.author.tag}\` (${userId})\nChannel: \`#${message.channel.name}\`\nAction: ${punishmentAction}`);
           }
         }
       } catch (err) {

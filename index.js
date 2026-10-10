@@ -12,7 +12,7 @@ const http = require('http');
 // ==========================================
 // CONFIGURATION
 // ==========================================
-const FOUNDER_USER_ID = 'YOUR_DISCORD_USER_ID_HERE'; // Replace with your actual user ID
+const FOUNDER_USER_ID = 1025757148543721474; // Replace with your actual user ID
 
 // Banned words list for auto-moderation
 const BANNED_WORDS = [

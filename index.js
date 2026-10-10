@@ -12,15 +12,41 @@ const http = require('http');
 // ==========================================
 // CONFIGURATION
 // ==========================================
-const FOUNDER_USER_ID = 'YOUR_DISCORD_USER_ID_HERE'; // Replace with your actual user ID
+const FOUNDER_USER_ID = 1025757148543721474; // Replace with your actual user ID
 
 // Banned words list for auto-moderation
 const BANNED_WORDS = [
   'nigger', 'nigga', 'faggot', 'retard', 'kike', 'spic', 'chink', 'wetback'
 ];
 
-// In-memory strike tracker: { userId: strikeCount }
-const strikeLog = new Map();
+// In-memory trackers
+const strikeLog = new Map();       // { userId: strikeCount }
+const userImageCounts = new Map(); // { userId: imageCount }
+const postedImageHashes = new Set(); // Stores attachment URLs/proxies to prevent duplicates
+
+// Gallery channels where the rules apply
+const GALLERY_CHANNELS = [
+  'camera-shots',
+  'mobile-shots',
+  'raw-edits-lounge',
+  'visual-inspiration',
+  'monthly-challenge-photos'
+];
+
+// 10-Image Milestone Ranks
+function getRankTitle(count) {
+  if (count >= 100) return 'Legendary Curator 🏆';
+  if (count >= 90) return 'Visionary Shutterbug ✨';
+  if (count >= 80) return 'Gallery Elite 🌟';
+  if (count >= 70) return 'Studio Veteran 🎬';
+  if (count >= 60) return 'Master of Light 💡';
+  if (count >= 50) return 'Composition Specialist 📐';
+  if (count >= 40) return 'Aesthetic Explorer 🧭';
+  if (count >= 30) return 'Frame Apprentice 🎞️';
+  if (count >= 20) return 'Dedicated Shooter 📸';
+  if (count >= 10) return 'Aspiring Hobbyist 📷';
+  return 'Smartphone Snapshotter / Novice Lens 📱';
+}
 
 // ==========================================
 // HTTP SERVER (FOR RENDER 24/7 UPTIME)
@@ -47,7 +73,7 @@ const client = new Client({
   ]
 });
 
-// Register Slash Commands (including /removestrike)
+// Register Slash Commands
 const commands = [
   new SlashCommandBuilder()
     .setName('purge')
@@ -78,7 +104,15 @@ const commands = [
       option.setName('target')
         .setDescription('The user to remove a strike from')
         .setRequired(true))
-    .setDefaultMemberPermissions(PermissionFlagsBits.ModerateMembers)
+    .setDefaultMemberPermissions(PermissionFlagsBits.ModerateMembers),
+
+  new SlashCommandBuilder()
+    .setName('level')
+    .setDescription('Check a member photography level, image count, and rank')
+    .addUserOption(option =>
+      option.setName('target')
+        .setDescription('The user whose level you want to check')
+        .setRequired(false))
 ].map(command => command.toJSON());
 
 client.once('ready', async () => {
@@ -102,9 +136,7 @@ client.once('ready', async () => {
 // ==========================================
 client.on('guildMemberAdd', async (member) => {
   try {
-    // Looks specifically for the #rules-and-welcome channel
     const welcomeChannel = member.guild.channels.cache.find(ch => ch.name === 'rules-and-welcome');
-    
     if (!welcomeChannel) return;
 
     const welcomeEmbed = new EmbedBuilder()
@@ -138,11 +170,106 @@ client.on('guildMemberAdd', async (member) => {
 });
 
 // ==========================================
-// AUTO-MOD & MESSAGE SCANNER
+// AUTO-MOD, GALLERY RULES & AI DETECTION
 // ==========================================
 client.on('messageCreate', async (message) => {
   if (message.author.bot || !message.guild) return;
 
+  const channelName = message.channel.name;
+  const isGalleryChannel = GALLERY_CHANNELS.includes(channelName);
+
+  // 1. GALLERY CHANNEL ENFORCEMENT (Image-Only, Duplication Check & AI Guard)
+  if (isGalleryChannel) {
+    const hasImage = message.attachments.size > 0 && message.attachments.some(att => att.contentType && att.contentType.startsWith('image'));
+
+    // If message is text-only or lacks a proper image file, delete it immediately
+    if (!hasImage) {
+      try {
+        await message.delete();
+        const warning = await message.channel.send(`${message.author}, this is a strict photo gallery channel! Please post images only. Use the companion chat channels for discussions.`);
+        setTimeout(() => warning.delete().catch(() => {}), 5000);
+      } catch (err) {
+        console.error('Failed to clean text message in gallery:', err);
+      }
+      return;
+    }
+
+    // Check for Duplication
+    const attachment = message.attachments.first();
+    const proxyUrl = attachment.proxyURL;
+
+    if (postedImageHashes.has(proxyUrl)) {
+      try {
+        await message.delete();
+        const warning = await message.channel.send(`${message.author}, that exact image has already been posted in the server galleries. Duplicate uploads are not allowed!`);
+        setTimeout(() => warning.delete().catch(() => {}), 5000);
+      } catch (err) {
+        console.error('Failed to block duplicate image:', err);
+      }
+      return;
+    }
+
+    // Add to duplicate cache
+    postedImageHashes.add(proxyUrl);
+
+    // AI Image Detection Guard (Checks filename indicators, links or common synthetic prompt tags)
+    const contentCheck = (message.content || '').toLowerCase();
+    const fileName = attachment.name ? attachment.name.toLowerCase() : '';
+    const isAiGenerated = fileName.includes('midjourney') || 
+                          fileName.includes('dalle') || 
+                          fileName.includes('stable-diffusion') || 
+                          contentCheck.includes('midjourney') || 
+                          contentCheck.includes('ai generated');
+
+    if (isAiGenerated) {
+      try {
+        await message.delete();
+        
+        // Issue an automatic strike for posting AI art in real photography channels
+        const userId = message.author.id;
+        let currentStrikes = (strikeLog.get(userId) || 0) + 1;
+        strikeLog.set(userId, currentStrikes);
+
+        let punishmentAction = '';
+        if (currentStrikes === 1) {
+          await message.member.timeout(60 * 60 * 1000, 'Auto-mod: AI-generated image posted in gallery');
+          punishmentAction = 'Issued Strike 1: 1-hour timeout.';
+        } else if (currentStrikes === 2) {
+          await message.member.timeout(24 * 60 * 60 * 1000, 'Auto-mod: AI-generated image posted in gallery');
+          punishmentAction = 'Issued Strike 2: 24-hour timeout.';
+        } else {
+          await message.guild.members.ban(userId, { reason: 'Auto-mod: Strike 3 reached (AI image policy violation)' });
+          punishmentAction = 'Issued Strike 3: Member banned.';
+        }
+
+        await message.channel.send(`${message.author}, AI-generated images are not permitted in real photography channels. ${punishmentAction}`);
+
+        // Notify Founder via DM
+        if (FOUNDER_USER_ID && FOUNDER_USER_ID !== 'YOUR_DISCORD_USER_ID_HERE') {
+          const founderUser = await client.users.fetch(FOUNDER_USER_ID).catch(() => null);
+          if (founderUser) {
+            await founderUser.send(`🤖 **AI Image Violation Alert** 🤖\nUser: \`${message.author.tag}\` (${userId})\nChannel: \`#${channelName}\`\nAction: ${punishmentAction}`);
+          }
+        }
+      } catch (err) {
+        console.error('Error handling AI image penalty:', err);
+      }
+      return;
+    }
+
+    // Award XP / Increment Photo Count for valid new images (10 images per level)
+    const userId = message.author.id;
+    const currentImages = (userImageCounts.get(userId) || 0) + 1;
+    userImageCounts.set(userId, currentImages);
+
+    // Optional level-up notification check
+    if (currentImages % 10 === 0) {
+      const newRank = getRankTitle(currentImages);
+      message.channel.send(`🎉 Congrats ${message.author}! You've reached **${currentImages} photos** posted and unlocked the rank: **${newRank}**!`).catch(() => {});
+    }
+  }
+
+  // 2. BANNED WORDS AUTO-MOD SCANNER
   const contentLower = message.content.toLowerCase();
   const matchedWord = BANNED_WORDS.find(word => contentLower.includes(word));
 
@@ -151,8 +278,7 @@ client.on('messageCreate', async (message) => {
       await message.delete();
 
       const userId = message.author.id;
-      let currentStrikes = strikeLog.get(userId) || 0;
-      currentStrikes += 1;
+      let currentStrikes = (strikeLog.get(userId) || 0) + 1;
       strikeLog.set(userId, currentStrikes);
 
       let punishmentAction = '';
@@ -169,21 +295,14 @@ client.on('messageCreate', async (message) => {
 
       try {
         await message.author.send(`You received a strike in **${message.guild.name}** for using prohibited language. Action taken: ${punishmentAction}`);
-      } catch (dmErr) {
-        console.log('Could not send DM to user.');
-      }
+      } catch (dmErr) {}
 
       if (FOUNDER_USER_ID && FOUNDER_USER_ID !== 'YOUR_DISCORD_USER_ID_HERE') {
-        try {
-          const founderUser = await client.users.fetch(FOUNDER_USER_ID);
-          if (founderUser) {
-            await founderUser.send(`🚨 **Auto-Mod Alert** 🚨\nUser: \`${message.author.tag}\` (${userId})\nServer: \`${message.guild.name}\`\nContent: \`${message.content}\`\nAction: ${punishmentAction} (Total Strikes: ${currentStrikes})`);
-          }
-        } catch (founderErr) {
-          console.error('Could not DM founder:', founderErr);
+        const founderUser = await client.users.fetch(FOUNDER_USER_ID).catch(() => null);
+        if (founderUser) {
+          await founderUser.send(`🚨 **Auto-Mod Alert** 🚨\nUser: \`${message.author.tag}\` (${userId})\nServer: \`${message.guild.name}\`\nContent: \`${message.content}\`\nAction: ${punishmentAction} (Total Strikes: ${currentStrikes})`);
         }
       }
-
     } catch (err) {
       console.error('Error handling auto-mod violation:', err);
     }
@@ -225,8 +344,7 @@ client.on('interactionCreate', async (interaction) => {
     }
 
     const userId = target.id;
-    let currentStrikes = strikeLog.get(userId) || 0;
-    currentStrikes += 1;
+    let currentStrikes = (strikeLog.get(userId) || 0) + 1;
     strikeLog.set(userId, currentStrikes);
 
     let actionTaken = '';
@@ -258,6 +376,29 @@ client.on('interactionCreate', async (interaction) => {
     strikeLog.set(userId, currentStrikes);
 
     await interaction.reply({ content: `Successfully removed a strike from ${target.tag}. Their new strike total is: **${currentStrikes}**.`, ephemeral: true });
+  }
+
+  // 4. Level / Rank Command (/level)
+  else if (commandName === 'level') {
+    const target = interaction.options.getUser('target') || interaction.user;
+    const userId = target.id;
+    const imagesCount = userImageCounts.get(userId) || 0;
+    const rankTitle = getRankTitle(imagesCount);
+    const strikes = strikeLog.get(userId) || 0;
+
+    const rankEmbed = new EmbedBuilder()
+      .setColor('#0099ff')
+      .setTitle(`📊 Photographer Stats: ${target.tag}`)
+      .setThumbnail(target.displayAvatarURL())
+      .addFields(
+        { name: '📷 Total Photos Posted', value: `${imagesCount} images`, inline: true },
+        { name: '🎖️ Current Rank', value: rankTitle, inline: true },
+        { name: '⚠️ Active Strikes', value: `${strikes}`, inline: true }
+      )
+      .setFooter({ text: 'Inspiration Gallery Management System' })
+      .setTimestamp();
+
+    await interaction.reply({ embeds: [rankEmbed] });
   }
 });
 
